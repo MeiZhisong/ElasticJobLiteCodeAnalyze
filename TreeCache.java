@@ -82,7 +82,9 @@ public class TreeCache implements Closeable
         private boolean dataIsCompressed = false;
         private ExecutorService executorService = null;
         private int maxDepth = Integer.MAX_VALUE;
+        /** 是否需要创建父节点 **/
         private boolean createParentNodes = false;
+        /** 用于区分哪些节点作为缓存使用 **/
         private TreeCacheSelector selector = new DefaultTreeCacheSelector();
 
         private Builder(CuratorFramework client, String path)
@@ -195,6 +197,7 @@ public class TreeCache implements Closeable
         return new Builder(client, path);
     }
 
+    /** 等待处理，有效，无效 **/
     private enum NodeState
     {
         PENDING, LIVE, DEAD
@@ -213,9 +216,12 @@ public class TreeCache implements Closeable
     {
 
         volatile NodeState nodeState = NodeState.PENDING;
+        /** 存储着stat,path以及data **/
         volatile ChildData childData;
+        /** 父节点 **/
         final TreeNode parent;
         final String path;
+        /** 子节点列表 **/
         volatile ConcurrentMap<String, TreeNode> children;
         final int depth;
 
@@ -228,12 +234,17 @@ public class TreeCache implements Closeable
 
         private void refresh() throws Exception
         {
+            /** 当前树的深度小于最大深度 && 指定路径下的子节点如果需要缓存 **/
             if ((depth < maxDepth) && selector.traverseChildren(path))
             {
+                /** 待处理的操作增加2 **/
                 outstandingOps.addAndGet(2);
+                /** 刷新节点数据 **/
                 doRefreshData();
+                /** 刷新子节点列表 **/
                 doRefreshChildren();
             } else {
+                /** 待处理的操作增加1，刷新节点数据 **/
                 refreshData();
             }
         }
@@ -297,6 +308,7 @@ public class TreeCache implements Closeable
             {
                 ArrayList<TreeNode> childCopy = new ArrayList<TreeNode>(childMap.values());
                 childMap.clear();
+                // 层级删除子节点
                 for ( TreeNode child : childCopy )
                 {
                     child.wasDeleted();
@@ -311,6 +323,7 @@ public class TreeCache implements Closeable
             NodeState oldState = nodeStateUpdater.getAndSet(this, NodeState.DEAD);
             if ( oldState == NodeState.LIVE )
             {
+                // 发布节点删除的事件
                 publishEvent(TreeCacheEvent.Type.NODE_REMOVED, oldChildData);
             }
 
@@ -372,6 +385,7 @@ public class TreeCache implements Closeable
                 if ( event.getResultCode() == KeeperException.Code.OK.intValue() )
                 {
                     nodeStateUpdater.compareAndSet(this, NodeState.DEAD, NodeState.PENDING);
+                    // 刷新节点数据
                     wasCreated();
                 }
                 break;
@@ -383,6 +397,7 @@ public class TreeCache implements Closeable
                     {
                         // Only update stat if mzxid is same, otherwise we might obscure
                         // GET_DATA event updates.
+                        // 只更新了stat
                         childDataUpdater.compareAndSet(this, oldChildData, new ChildData(oldChildData.getPath(), newStat, oldChildData.getData()));
                     }
 
@@ -405,6 +420,7 @@ public class TreeCache implements Closeable
                     List<String> newChildren = new ArrayList<String>();
                     for ( String child : event.getChildren() )
                     {
+                        /** 节点应当从缓存中返回 **/
                         if ( !childMap.containsKey(child) && selector.acceptChild(ZKPaths.makePath(path, child)) )
                         {
                             newChildren.add(child);
@@ -414,6 +430,7 @@ public class TreeCache implements Closeable
                     Collections.sort(newChildren);
                     for ( String child : newChildren )
                     {
+                        /** 将节点与子节点的路径连接，得到完全路径 **/
                         String fullPath = ZKPaths.makePath(path, child);
                         TreeNode node = new TreeNode(fullPath, this);
                         if ( childMap.putIfAbsent(child, node) == null )
@@ -424,6 +441,7 @@ public class TreeCache implements Closeable
                 }
                 else if ( event.getResultCode() == KeeperException.Code.NONODE.intValue() )
                 {
+                    // 删除节点以及子节点
                     wasDeleted();
                 }
                 break;
@@ -511,8 +529,11 @@ public class TreeCache implements Closeable
     private final TreeNode root;
     private final CuratorFramework client;
     private final ExecutorService executorService;
+    /** 是否缓存数据 **/
     private final boolean cacheData;
+    /** 数据是否压缩 **/
     private final boolean dataIsCompressed;
+    /** 树结构的最大深度 **/
     private final int maxDepth;
     private final ListenerContainer<TreeCacheListener> listeners = new ListenerContainer<TreeCacheListener>();
     private final ListenerContainer<UnhandledErrorListener> errorListeners = new ListenerContainer<UnhandledErrorListener>();
@@ -576,14 +597,18 @@ public class TreeCache implements Closeable
      */
     public TreeCache start() throws Exception
     {
+        // 原子更新状态LATENT -> STARTED
         Preconditions.checkState(treeState.compareAndSet(TreeState.LATENT, TreeState.STARTED), "already started");
+        // 创建父节点
         if ( createParentNodes )
         {
             client.createContainers(root.path);
         }
+        // 添加连接状态监听器
         client.getConnectionStateListenable().addListener(connectionStateListener);
         if ( client.getZookeeperClient().isConnected() )
         {
+            // 刷新节点数据
             root.wasCreated();
         }
         return this;
@@ -710,12 +735,7 @@ public class TreeCache implements Closeable
     }
 
     /**
-     * Return the current data for the given path. There are no guarantees of accuracy. This is
-     * merely the most recent view of the data. If there is no node at the given path,
-     * {@code null} is returned.
-     *
-     * @param fullPath full path to the node to check
-     * @return data if the node is alive, or null
+     * 返回给定路径的当前数据。没有准确性的保证。呈现的是最近的数据的视图。如果给定路径下没有节点，那么会返回空
      */
     public ChildData getCurrentData(String fullPath)
     {
