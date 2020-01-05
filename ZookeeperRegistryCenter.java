@@ -309,12 +309,14 @@ public final class ZookeeperRegistryCenter implements CoordinatorRegistryCenter 
     public void addCacheData(final String cachePath) {
         TreeCache cache = new TreeCache(client, cachePath);
         try {
+            /** 设置TreeState的状态为STARTED,根据设置来创建父节点，添加连接状态监听器 **/
             cache.start();
         //CHECKSTYLE:OFF
         } catch (final Exception ex) {
         //CHECKSTYLE:ON
             RegExceptionHandler.handleException(ex);
         }
+        /** 缓存数据 **/
         caches.put(cachePath + "/", cache);
     }
     
