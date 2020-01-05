@@ -68,6 +68,7 @@ import static org.apache.curator.utils.PathUtils.validatePath;
  * be prepared for false-positives and false-negatives. Additionally, always use the version number
  * when updating data to avoid overwriting another process' change.</p>
  */
+// 个人总结：缓存指定路径下的所有节点
 public class TreeCache implements Closeable
 {
     private static final Logger LOG = LoggerFactory.getLogger(TreeCache.class);
